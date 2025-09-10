@@ -60,6 +60,17 @@ import datetime
 from datetime import timezone
 import pytz
 
+# Pandas library for handling Excel spreadsheets.
+import pandas as pd
+from pandas import ExcelWriter
+from pandas import ExcelFile
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+
+# Add support for argument passing, used to collect information on what
+# action to perform.
+import argparse
+
 # =======================================================================================
 # END Import modules and dependencies
 # =======================================================================================
@@ -105,7 +116,7 @@ logName = "excel_tools"
 logPath = scriptPath()+"/logs/"+logName
 minLogLevel = logging.INFO
 
-default_config_file = scriptPath()+"/excel_tools_config.yml"
+default_config_file = scriptPath()+"/excel_tool_config.yml"
 
 
 # =======================================================================================
@@ -143,48 +154,207 @@ class ExcelManipulationTool():
         else:
             return False
 
+
+
+    def process_parameters(self):
+        doLog.info("Processing command line parameters...")
+
+        scriptDesc = "Excel Manipulation Tool - Perform various Excel spreadsheet manipulations."
+        scriptContact = "Please contact Greg Jewett for support; greg@ejewett.com"
+        aParser = argparse.ArgumentParser(  description = scriptDesc,
+                                            epilog = scriptContact,
+                                            add_help = True,
+                                            allow_abbrev = False)
+
+
+        subParsers = aParser.add_subparsers(help = 'sub-command help',
+                                            required = True,
+                                            dest = 'command')
+
+
+        # ---------------------------------------------------------------------------------------
+        # BEGIN SUB-COMMAND: SPLIT
+        # ---------------------------------------------------------------------------------------
+        theHelp = "Split an Excel file into multiple sheets.  Use 'split -h' to list of parameters"
+        splitParser = subParsers.add_parser("split", help = theHelp)
+
+
+        # PARAMETER:  Get the filename that contains PEM data to decode
+        # ------------------------------------------------------------------------
+        theHelp = "The path and filename of the excel file to split."
+        splitParser.add_argument( "-f",
+                                action = "store",
+                                default = "",
+                                type = str,
+                                dest = "excelFile",
+                                help = theHelp,
+                                required = True)
+        # ---------------------------------------------------------------------------------------
+        # END SUB-COMMAND: DECODE certificate PEM data
+        # ---------------------------------------------------------------------------------------
+
+
+
+
+        # Check to see if any parameters were provided, as there are some that are required.
+        # If none provided, then output the help section.
+        # ------------------------------------------------------------------------
+        if len(sys.argv) < 2:
+            aParser.print_help()
+            sys.exit(1)
+
+
+        # Setup class variables based on parameters
+        # -------------------------------------------------------
+        params = vars(aParser.parse_args())
+        self.excel_file = params.get("excelFile")
+        self.command = params.get("command")
+
+
+    # SPLIT COMMAND
+    # Split an Excel file into multiple sheets based on the agent name value.
+    # ------------------------------------------------------------------------
+    def split_sheet(self):
+        doLog.info("Splitting Excel file: "+self.excel_file)
+
+        if not os.path.isfile(self.excel_file):
+            doLog.error("Excel file does not exist: "+self.excel_file)
+            self.setStatus(False)
+            return
+
+        try:
+            xls = pd.ExcelFile(self.excel_file)
+        except Exception as e:
+            doLog.error("Error reading Excel file: "+self.excel_file)
+            doLog.error(e)
+            self.setStatus(False)
+            return
+
+        # Create the "split" output directory if it does not already exist.
+        output_dir = os.path.splitext(self.excel_file)[0]+"_split"
+        pathlib.Path(output_dir).mkdir(exist_ok=True)
+
+        sheet_names = xls.sheet_names
+        doLog.info("Excel file contains the following sheets:")
+        for sheet in sheet_names:
+            doLog.info(" -> "+sheet)
+
+        # Read in the first sheet only.
+        try:
+            df = pd.read_excel(self.excel_file, sheet_name=sheet_names[0])
+        except Exception as e:
+            doLog.error("Error reading first sheet of Excel file: "+self.excel_file)
+            doLog.error(e)
+            self.setStatus(False)
+            return
+
+        if 'Agent Full Name' not in df.columns:
+            doLog.error("Excel sheet does not contain 'Agent Full Name' column, cannot split!")
+            self.setStatus(False)
+            return
+
+        # Grab the first row (header row) to be used for all output files.
+        header_row = pd.DataFrame([df.columns])  # DataFrame as single row with column names
+
+
+        # Sort by "Agent Full Name"
+        df = df.sort_values(by=['Agent Full Name'], ascending=True)
+
+        agent_names = df['Agent Full Name'].unique()
+        doLog.info("Found "+str(len(agent_names))+" unique Agent Full Name values to split on!")
+        # for agent in agent_names:
+        #     doLog.info("   - "+str(agent))
+
+        # Split the dataframe based on unique Agent Full Name values and write to separate files.
+        for agent in agent_names:
+            agent_df = df[df['Agent Full Name'] == agent]
+            output_file = f"{os.path.splitext(self.excel_file)[0]}_{agent}.xlsx"
+            output_file = os.path.join(output_dir, os.path.basename(output_file))
+
+
+            try:
+                with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+                    header_row.to_excel(writer, index=False, header=False, startrow=0)
+                    agent_df.to_excel(writer, index=False, header=False, startrow=1)
+                doLog.info(f"Wrote {len(agent_df)} records to file: {output_file}")
+            except Exception as e:
+                doLog.error(f"Error writing Excel file for Agent Full Name '{agent}': {output_file}")
+                doLog.error(e)
+                self.setStatus(False)
+
+            # Adjust column widths for all output files to fit content of all columns.
+            # ------------------------------------------------------------------------
+            # Load the workbook and select the active sheet
+            workbook = load_workbook(output_file)
+            sheet = workbook.active
+
+            # Adjust column widths based on the header_row and agent_df
+            for col in sheet.columns:
+                max_length = 0
+                column_letter = col[0].column_letter  # Get the column letter (e.g., 'A', 'B', etc.)
+                for cell in col:
+                    try:
+                        if cell.value:  # Check if the cell has a value
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = max_length + 2  # Add some padding
+                sheet.column_dimensions[column_letter].width = adjusted_width  # Set the column width
+
+            # Define the yellow fill style
+            yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+            # Apply the yellow fill to each cell in the header row
+            for cell in sheet[1]:  # The header row is the first row (row 1)
+                cell.fill = yellow_fill
+
+
+            # Save the workbook after adjusting the widths
+            workbook.save(output_file)
+
+
+
     # Initialization Method
     # -------------------------------------------------------
-    def __init__(self):
+    def __init__(self, config_file):
 
         self.requestStatus = True
+        self.config_file = config_file
+
 
         # Obtain default values from configuration (YML) file.
         # -------------------------------------------------------
         configData = dict()
+        doLog.info("Reading configuration file: "+str(self.config_file))
+
         try:
-            with open(default_config_file, "r") as configFile:
+            with open(self.config_file, "r") as configFile:
                 configData = yaml.safe_load(configFile)
-        except FileNotFoundError as e:
+        except FileNotFoundError as error:
+            doLog.error("File not found error reading configuration file: "+self.config_file)
+            doLog.error(error)
             self.setStatus(False)
-        except yaml.YAMLError as e:
+        except yaml.YAMLError as error:
+            doLog.error("YAML error reading configuration file: "+self.config_file)
+            doLog.error(error)
+            self.setStatus(False)
+        except IOError as error:
+            doLog.error("I/O error reading configuration file: "+self.config_file)
+            doLog.error(error)
+            self.setStatus(False)
+        except Exception as unknownError:
+            doLog.error("Unknown error reading configuration file: "+self.config_file)
+            doLog.error(unknownError)
             self.setStatus(False)
 
+
+        self.process_parameters()
+
+
+        # Setup class variables based on configuration file
+        # -------------------------------------------------------
         # self.default_cert_org = configData.get("default_cert_org", "")
         # self.default_cert_state = configData.get("default_cert_state", "")
 
-
-    # Write the certificate PEM, Private PEM, and CSR PEM data to files.
-    # ------------------------------------------------------------------------
-    def write_to_files(self):
-
-        doLog.info("Write Private Key data to file: "+self.private_key_file)
-        with open(self.private_key_file, 'w') as pk_fp:
-            try:
-                pk_fp.write(self.cert_private_key_pem)
-            except IOError as e:
-                doLog.error("Error writing to Private Key file: "+self.private_key_file)
-                doLog.error(e)
-                self.setStatus(False)
-
-        doLog.info("Write Certificate PEM data to file: "+self.certificate_file)
-        with open(self.certificate_file, 'w') as cert_fp:
-            try:
-                cert_fp.write(self.cert_pem)
-            except IOError as e:
-                doLog.error("Error writing to Certificate file: "+self.certificate_file)
-                doLog.error(e)
-                self.setStatus(False)
 
 
 # =======================================================================================
@@ -234,31 +404,6 @@ def setupLogging(logPath, logName, minLogLevel=logging.info, logTag="",
     doLog.disable(level=(minLogLevel-10))
     return doLog
 
-
-# Read a configuration file
-# -------------------------------------------------------
-def readConfig(configFN):
-    readStatus = True
-    configData = dict()
-    try:
-        with open(scriptPath()+"/configs/"+configFN, 'r') as fileData:
-            configData = yaml.safe_load(fileData)
-    except yaml.YAMLError as yamlError:
-        doLog.error("YAML decoding error reading configuration file: "+configFN)
-        doLog.error(yamlError)
-        readStatus = False
-    except IOError as error:
-        doLog.error("I/O error reading configuration file: "+configFN)
-        doLog.error(error)
-        readStatus = False
-    except Exception as unknownError:
-        doLog.error("Unknown error reading configuration file: "+configFN)
-        doLog.error(unknownError)
-        readStatus = False
-
-    return configData, readStatus
-
-
 # Display content in a list in columns
 def display_columns(thelist, columns):
     rows = (len(thelist) + columns - 1) // columns
@@ -289,19 +434,17 @@ if __name__ == '__main__':
     # Setup logging, instance is global, can be used by all functions.
     doLog = setupLogging(logPath, logName, minLogLevel, logTag, scriptName, scriptVer, screenOut=True)
 
-    # Define "excelReq", an instance of CertificateRequest
-    excelReq = ExcelManipulationTool()
-    if not excelReq.getStatus():
-        doLog.error("Error initializing - reading default config file: "+default_config_file)
-        excelReq.setStatus(False)
+    # Define "excelReq", an instance of ExcelManipulationTool
+    excelReq = ExcelManipulationTool(default_config_file)
 
     if excelReq.getStatus():
         doLog.info("Starting Excel Manipulation Tool script...")
+        doLog.info("Excel file to manipulate: "+str(excelReq.excel_file))
 
-
-
-
-
+        match excelReq.command:
+            case 'split':
+                # Perform Excel manipulations
+                excelReq.split_sheet()
 
     # ALL DONE, announce with status!
     if excelReq.getStatus():
