@@ -1,0 +1,15 @@
+---
+# // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * //
+#
+# IT MUST BE ENSURED that none of the default variables listed below are used in the script,
+# else unpredeicable results may occur.
+#
+# // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * // * //
+
+# Excel Manipulation Tools Configuration File
+# These are default variables required for certificate generation and can be overridden
+# via the command-line parameters.
+# ======================================================================================
+
+# Organization (O)
+#default_cert_org: The University of Texas at Austin

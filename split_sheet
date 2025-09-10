@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+#
+# Excel Spreadsheet Manipulation Script - Split Sheet
+#
+# Code written by:
+#   Greg Jewett, jewettg@austin.utexas.edu, 512-471-9645
+#
+# Code maintained by:
+#   Greg Jewett, jewettg@austin.utexas.edu, 512-471-9645
+#
+# Using pandas libraries, read in an Excel spreadsheet and perform related functions.
+#
+# ---------------------------------------------------------------------------------------
+# CHANGE LOG
+# 2025-09-10 (GSJ) Initial version.
+#
+# ---------------------------------------------------------------------------------------
+
+# =======================================================================================
+# BEGIN Import modules and dependencies
+# =======================================================================================
+
+# The system module for Python, specifically use to get command line arguments.
+import sys
+
+# =======================================================================================
+# CHECK PYTHON VERSION
+# Error out for any Python version earlier than minimum supported version.
+# =======================================================================================
+minVer = (3,11,0)
+curVer = sys.version_info[0:]
+if curVer < minVer:
+    print("Current Python version: {}.{}.{}".format(*curVer+(0,0,)))
+    print("ABORT: Expect Python version {}.{}.{}".format(*minVer+(0,0,))+" or better required!")
+    sys.exit(1)
+
+# Import Regular Expression method
+import re
+
+# The operating system module/library
+import os
+
+# Import the logging module, configuration in __main__
+import logging
+
+# Import the object-oriented filesystem paths "pathlib"
+import pathlib
+
+# Import time module to allow the script to "sleep"
+import time
+
+# YAML library for handling of YAML data types.
+import yaml
+
+# JSON library for handling of JSON data types.
+import json
+
+# Manipulation of date/time formats and data.
+import datetime
+from datetime import timezone
+import pytz
+
+# =======================================================================================
+# END Import modules and dependencies
+# =======================================================================================
+
+
+# =======================================================================================
+# BEGIN Functions used by global path variables.
+# =======================================================================================
+# Get Script Path
+def scriptPath():
+    return os.path.dirname(os.path.realpath(__file__))
+
+# function to return a string (date/time) stamp, based on format needed.
+def dt_stamp(format):
+    stamp = datetime.datetime.now()
+    if format == "d":
+        # current date in ISO (YYYY-MM-DD) format
+        return stamp.strftime("%Y-%m-%d")
+    if format == "dt":
+        # current date/time in ISO format: YYYY-MM-DDTHH:MM:SS.ddddd
+        return stamp.isoformat()
+    if format == "t":
+        # current time in ISO format: HH:MM:SS.ddddd
+        return stamp.strftime("%H:%M:%S.%f")
+    if format == "fdt":
+        # current date and time in format supported by OS for filenames.
+        return stamp.strftime("%Y-%m-%d_%H%M%S")
+
+# =======================================================================================
+# END Functions used by global path variables.
+# =======================================================================================
+
+# =======================================================================================
+# BEGIN Required variables and setup
+# =======================================================================================
+
+# Logging Metadata
+scriptVer = "1.0"
+scriptName = "Excel Manipulation Tools"
+logTag = "EXCELTOOL"
+logName = "excel_tools"
+# logPath = "/opt/lb-bkups/script_logs/"+logName
+logPath = scriptPath()+"/logs/"+logName
+minLogLevel = logging.INFO
+
+default_config_file = scriptPath()+"/excel_tools_config.yml"
+
+
+# =======================================================================================
+# END Required setup and global variables
+# =======================================================================================
+
+
+
+
+# =======================================================================================
+# BEGIN Class Declarations
+# =======================================================================================
+
+# Define a class that will hold the request issued, along with status, etc..
+# ------------------------------------------------------------------
+class ExcelManipulationTool():
+
+    # Class Methods
+    # -------------------------------------------------------
+
+    # Set the renewal status and if present, error message.
+    def setStatus(self, status):
+        if type(status) != bool:
+            self.requestStatus = False
+        else:
+            self.requestStatus = status
+
+    # Return the renewal status
+    def getStatus(self):
+        if hasattr(self, 'requestStatus'):
+            if type(self.requestStatus) != bool:
+                self.requestStatus = False
+            else:
+                return self.requestStatus
+        else:
+            return False
+
+    # Initialization Method
+    # -------------------------------------------------------
+    def __init__(self):
+
+        self.requestStatus = True
+
+        # Obtain default values from configuration (YML) file.
+        # -------------------------------------------------------
+        configData = dict()
+        try:
+            with open(default_config_file, "r") as configFile:
+                configData = yaml.safe_load(configFile)
+        except FileNotFoundError as e:
+            self.setStatus(False)
+        except yaml.YAMLError as e:
+            self.setStatus(False)
+
+        # self.default_cert_org = configData.get("default_cert_org", "")
+        # self.default_cert_state = configData.get("default_cert_state", "")
+
+
+    # Write the certificate PEM, Private PEM, and CSR PEM data to files.
+    # ------------------------------------------------------------------------
+    def write_to_files(self):
+
+        doLog.info("Write Private Key data to file: "+self.private_key_file)
+        with open(self.private_key_file, 'w') as pk_fp:
+            try:
+                pk_fp.write(self.cert_private_key_pem)
+            except IOError as e:
+                doLog.error("Error writing to Private Key file: "+self.private_key_file)
+                doLog.error(e)
+                self.setStatus(False)
+
+        doLog.info("Write Certificate PEM data to file: "+self.certificate_file)
+        with open(self.certificate_file, 'w') as cert_fp:
+            try:
+                cert_fp.write(self.cert_pem)
+            except IOError as e:
+                doLog.error("Error writing to Certificate file: "+self.certificate_file)
+                doLog.error(e)
+                self.setStatus(False)
+
+
+# =======================================================================================
+# END Class Declarations
+# =======================================================================================
+
+
+# =======================================================================================
+# BEGIN Functions Declarations
+# =======================================================================================
+
+
+# Setup and configure the logging system.
+# -------------------------------------------------------
+def setupLogging(logPath, logName, minLogLevel=logging.info, logTag="",
+                 scriptName=logName, scriptVer="1.0", screenOut=False):
+
+    logFile = logPath+"/"+logName+"_"+dt_stamp('d')+".log"
+    levelOut = {50:"CRITICAL", 40:"ERROR", 30:"WARNING", 20:"INFO", 10:"DEBUG", 0:"NOTSET" }
+
+    # Check if the logPath exists, if not create it.
+    pathlib.Path(logPath).mkdir(parents=True, exist_ok=True)
+
+    if screenOut:
+        handlers = [logging.FileHandler(filename=logFile, mode='a'),
+                    logging.StreamHandler(sys.stdout) ]
+    else:
+        handlers = [logging.FileHandler(filename=logFile, mode='a') ]
+
+    logTag = (logTag if len(logTag) > 0 else re.sub("[^A-Z0-9]", "", re.sub("[a-z]", '', scriptName))[0:5])
+
+    # Create the logging instance
+    doLog = logging
+    doLog.basicConfig(level=minLogLevel,
+                      format="%(asctime)s %(levelname)-8s ("+logTag+") %(message)s",
+                      handlers = handlers,
+                      force=True)
+
+    # Write out a log header
+    doLog.info("----------------------------------------------------------------------")
+    doLog.info(scriptName+"    v"+scriptVer)
+    doLog.info("----------------------------------------------------------------------")
+    doLog.info("Log Start: "+dt_stamp('d')+" "+dt_stamp('t'))
+    doLog.info("Writing script log data to: "+logFile)
+
+    doLog.info("Minimum logging level will be set to: "+levelOut.get(minLogLevel, "UNKNOWN"))
+    doLog.disable(level=(minLogLevel-10))
+    return doLog
+
+
+# Read a configuration file
+# -------------------------------------------------------
+def readConfig(configFN):
+    readStatus = True
+    configData = dict()
+    try:
+        with open(scriptPath()+"/configs/"+configFN, 'r') as fileData:
+            configData = yaml.safe_load(fileData)
+    except yaml.YAMLError as yamlError:
+        doLog.error("YAML decoding error reading configuration file: "+configFN)
+        doLog.error(yamlError)
+        readStatus = False
+    except IOError as error:
+        doLog.error("I/O error reading configuration file: "+configFN)
+        doLog.error(error)
+        readStatus = False
+    except Exception as unknownError:
+        doLog.error("Unknown error reading configuration file: "+configFN)
+        doLog.error(unknownError)
+        readStatus = False
+
+    return configData, readStatus
+
+
+# Display content in a list in columns
+def display_columns(thelist, columns):
+    rows = (len(thelist) + columns - 1) // columns
+    formatted_rows = []
+    for i in range(rows):
+        row = ""
+        for j in range(columns):
+            index = i + j * rows
+            if index < len(thelist):
+                row += f"{thelist[index]:<30} "
+        formatted_rows.append(row.strip())
+    return formatted_rows
+
+
+
+# =======================================================================================
+# END Functions Declarations
+# =======================================================================================
+
+
+
+
+# =======================================================================================
+# BEGIN Script
+# =======================================================================================
+
+if __name__ == '__main__':
+    # Setup logging, instance is global, can be used by all functions.
+    doLog = setupLogging(logPath, logName, minLogLevel, logTag, scriptName, scriptVer, screenOut=True)
+
+    # Define "excelReq", an instance of CertificateRequest
+    excelReq = ExcelManipulationTool()
+    if not excelReq.getStatus():
+        doLog.error("Error initializing - reading default config file: "+default_config_file)
+        excelReq.setStatus(False)
+
+    if excelReq.getStatus():
+        doLog.info("Starting Excel Manipulation Tool script...")
+
+
+
+
+
+
+    # ALL DONE, announce with status!
+    if excelReq.getStatus():
+        doLog.info("Script Finished!")
+        doLog.info("All tasks completed successfully.")
+    else:
+        doLog.error("Script encountered errors in processing Excel manipulations!")
+        doLog.error("One or more tasks failed, please check the log file for details.")
+
+    # Shutdown the logger.
+    doLog.shutdown()
+# =======================================================================================
+# END Script
+# =======================================================================================
