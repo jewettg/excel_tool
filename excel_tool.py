@@ -189,6 +189,16 @@ class ExcelManipulationTool():
                                 dest = "excelFile",
                                 help = theHelp,
                                 required = True)
+
+        # PARAMETER:  Name of column to split on
+        # ------------------------------------------------------------------------
+        theHelp = "The name of the column to split the sheet on. "
+        splitParser.add_argument( "-c",
+                                action = "store",
+                                type = str,
+                                dest = "split_column",
+                                help = theHelp,
+                                required = True)
         # ---------------------------------------------------------------------------------------
         # END SUB-COMMAND: DECODE certificate PEM data
         # ---------------------------------------------------------------------------------------
@@ -209,6 +219,7 @@ class ExcelManipulationTool():
         params = vars(aParser.parse_args())
         self.excel_file = params.get("excelFile")
         self.command = params.get("command")
+        self.split_column = params.get("split_column")
 
 
     # SPLIT COMMAND
@@ -248,8 +259,8 @@ class ExcelManipulationTool():
             self.setStatus(False)
             return
 
-        if 'Agent Full Name' not in df.columns:
-            doLog.error("Excel sheet does not contain 'Agent Full Name' column, cannot split!")
+        if self.split_column not in df.columns:
+            doLog.error("Excel sheet does not contain '"+self.split_column+"' column, cannot split!")
             self.setStatus(False)
             return
 
@@ -257,18 +268,19 @@ class ExcelManipulationTool():
         header_row = pd.DataFrame([df.columns])  # DataFrame as single row with column names
 
 
-        # Sort by "Agent Full Name"
-        df = df.sort_values(by=['Agent Full Name'], ascending=True)
+        # Sort by specified column to ensure all like values are together.
+        df = df.sort_values(by=[self.split_column], ascending=True)
 
-        agent_names = df['Agent Full Name'].unique()
-        doLog.info("Found "+str(len(agent_names))+" unique Agent Full Name values to split on!")
+        agent_names = df[self.split_column].unique()
+        doLog.info("Found "+str(len(agent_names))+" unique "+self.split_column+" values to split on!")
         # for agent in agent_names:
         #     doLog.info("   - "+str(agent))
 
-        # Split the dataframe based on unique Agent Full Name values and write to separate files.
+        # Split the dataframe based on unique values for column specified and write to separate files.
         for agent in agent_names:
-            agent_df = df[df['Agent Full Name'] == agent]
-            output_file = f"{os.path.splitext(self.excel_file)[0]}_{agent}.xlsx"
+            agent_df = df[df[self.split_column] == agent]
+            clean_agent = re.sub(r'[^A-Za-z0-9_]', '_', str(agent)).replace('__', '_').strip('_')
+            output_file = f"{os.path.splitext(self.excel_file)[0]}_{clean_agent}.xlsx"
             output_file = os.path.join(output_dir, os.path.basename(output_file))
 
 
@@ -278,7 +290,7 @@ class ExcelManipulationTool():
                     agent_df.to_excel(writer, index=False, header=False, startrow=1)
                 doLog.info(f"Wrote {len(agent_df)} records to file: {output_file}")
             except Exception as e:
-                doLog.error(f"Error writing Excel file for Agent Full Name '{agent}': {output_file}")
+                doLog.error(f"Error writing Excel file for "+self.split_column+" '{agent}': {output_file}")
                 doLog.error(e)
                 self.setStatus(False)
 
